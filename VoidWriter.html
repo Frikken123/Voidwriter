@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>VoidWriter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html-to-image/1.11.11/html-to-image.min.js"></script>
+<style>
+  @font-face {
+    font-family: 'Rough Serif';
+    src: url('./Rough Serif.ttf'); 
+  }
+
+  * { box-sizing: border-box; }
+  
+  body {
+    background-color: #000000;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  #viewport {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  #paper {
+    position: absolute;
+    width: 240mm;
+    height: 297mm;
+    background-image: url('./nordwood-themes-R53t-Tg6J4c-unsplash.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    padding: 25mm 25mm;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+    outline: none;
+    font-family: 'Rough Serif', Courier, monospace;
+    font-size: 24px;
+    line-height: 1.5;
+    caret-color: transparent !important;
+    white-space: pre-wrap; 
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    transition: transform 0.08s ease-out;
+    transform: translate(0px, 0px);
+    display: block;
+    text-align: left;
+  }
+
+  #paper, 
+  #paper * {
+    color: #171717 !important;
+    -webkit-text-fill-color: #171717 !important;
+    text-shadow: none !important; 
+  }
+
+  /* High-res offscreen rendering box */
+  #offscreen-capture-box {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 240mm;
+    height: 297mm;
+    background-image: url('./nordwood-themes-R53t-Tg6J4c-unsplash.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    padding: 25mm 25mm;
+    font-family: 'Rough Serif', Courier, monospace;
+    font-size: 24px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    color: #171717 !important;
+    -webkit-text-fill-color: #171717 !important;
+    box-sizing: border-box;
+    text-align: left;
+    opacity: 0;
+    pointer-events: none;
+    z-index: -9999;
+  }
+</style>
+</head>
+<body>
+
+<div id="viewport">
+  <div id="paper" contenteditable="true" spellcheck="false"></div>
+</div>
+
+<div id="offscreen-capture-box"></div>
+
+<script>
+const paper = document.getElementById('paper');
+let committedPages = [];
+let lastCursorTop = null;
+let lastTransformState = null;
+let appHasLoaded = false;
+let isRestoringProject = false;
+
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  
+  try {
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      if (file && file.path && window.desktopAPI && window.desktopAPI.sendDroppedFilePath) {
+        window.desktopAPI.sendDroppedFilePath(file.path);
+      }
+    }
+  } catch (err) {}
+});
+
+const keySounds = ['Sounds/keyup.mp3', 'Sounds/keydown.mp3'];
+const bellSound = 'Sounds/ding.mp3';
+
+function playSound(filePath) {
+  try {
+    const sound = new Audio(filePath);
+    sound.volume = 0.8; 
+    sound.play().catch(err => {});
+  } catch (e) {}
+}
+
+function triggerDing() {
+  if (!appHasLoaded) return; 
+  playSound(bellSound);      
+}
+
+function mmToPx(mm) {
+  const div = document.createElement('div');
+  div.style.display = 'block';
+  div.style.height = '100mm';
+  document.body.appendChild(div);
+  const px = div.offsetHeight / 100;
+  document.body.removeChild(div);
+  return mm * px;
+}
+
+function initializePosition(preserveTransform = null) {
+  try {
+    if (preserveTransform) {
+      paper.style.transition = 'none';
+      paper.style.transform = preserveTransform;
+      setTimeout(() => {
+        paper.style.transition = 'transform 0.08s ease-out';
+        appHasLoaded = true;
+      }, 50);
+      return;
+    }
+
+    const paperWidth = paper.offsetWidth;
+    const paperHeight = paper.offsetHeight;
+    const paddingLeftPx = mmToPx(25);
+    const paddingTopPx = mmToPx(25);
+    const naturalPaperLeft = (window.innerWidth / 2) - (paperWidth / 2);
+    const naturalPaperTop = (window.innerHeight / 2) - (paperHeight / 2);
+    
+    const initialCursorX = naturalPaperLeft + paddingLeftPx;
+    const initialCursorY = naturalPaperTop + paddingTopPx + 12;
+    const targetX = window.innerWidth / 2;
+    const targetY = window.innerHeight * 0.35;
+    
+    const startupTx = targetX - initialCursorX;
+    const startupTy = targetY - initialCursorY;
+    
+    paper.style.transition = 'none';
+    paper.style.transform = `translate(${startupTx}px, ${startupTy}px)`;
+    
+    setTimeout(() => {
+      paper.style.transition = 'transform 0.08s ease-out';
+      const selection = window.getSelection();
+      if (selection.rangeCount) {
+        const range = selection.getRangeAt(0);
+        const rects = range.getClientRects();
+        if (rects.length > 0) lastCursorTop = rects[0].top;
+      }
+      appHasLoaded = true;
+    }, 50);
+  } catch (e) {
+    appHasLoaded = true; 
+  }
+}
+
+window.addEventListener('load', () => {
+  paper.innerHTML = '&#8203;'; 
+  paper.focus();
+  initializePosition();
+});
+
+function getCursorIndex() {
+  let cursorIndex = 0;
+  try {
+    const sel = window.getSelection();
+    if (sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      const preCaretRange = range.cloneRange();
+      preCaretRange.selectNodeContents(paper);
+      preCaretRange.setEnd(range.endContainer, range.endOffset);
+      cursorIndex = preCaretRange.toString().length;
+    }
+  } catch (e) {}
+  return cursorIndex;
+}
+
+function getFullActiveText() {
+  const currentText = (paper.innerText || '').replace(/\u200B/g, '').trim();
+  const historyText = committedPages.join(" ").replace(/\u200B/g, '').trim();
+  return (historyText + " " + currentText).trim();
+}
+
+function alignPaperToCursor(event) {
+  if (isRestoringProject) return;
+  try {
+    const selection = window.getSelection();
+    if (!selection.rangeCount) return;
+    
+    const range = selection.getRangeAt(0);
+    const rects = range.getClientRects();
+    
+    if (rects.length > 0) {
+      const cursorRect = rects[0];
+      const style = window.getComputedStyle(paper);
+      const matrix = new DOMMatrixReadOnly(style.transform);
+      const currentTx = matrix.m41;
+      const currentTy = matrix.m42;
+      
+      const targetScreenX = window.innerWidth / 2;
+      const targetScreenY = window.innerHeight * 0.35;
+      const dx = targetScreenX - cursorRect.left;
+      const dy = targetScreenY - cursorRect.top;
+      
+      let targetX = currentTx + dx;
+      let targetY = currentTy + dy;
+      
+      const limitX = (paper.offsetWidth / 2) - 80; 
+      const limitY = (paper.offsetHeight / 2) - 5; 
+      
+      if (targetY < -limitY) {
+        const pageText = paper.innerText.replace(/\u200B/g, '').trim();
+        if (pageText.length > 0) {
+          committedPages.push(paper.innerHTML);
+          lastTransformState = paper.style.transform;
+        }
+
+        triggerDing(); 
+        paper.innerHTML = '&#8203;'; 
+        
+        const freshRange = document.createRange();
+        const freshSel = window.getSelection();
+        freshRange.selectNodeContents(paper);
+        freshRange.collapse(true);
+        freshSel.removeAllRanges();
+        freshSel.addRange(freshRange);
+
+        initializePosition();
+        sendTextToMemory();
+        return;
+      }
+
+      if (targetX < -limitX) targetX = -limitX;
+      if (targetX > limitX) targetX = limitX;
+      if (targetY > limitY) targetY = limitY;
+      
+      paper.style.transform = `translate(${targetX}px, ${targetY}px)`;
+
+      if (lastCursorTop !== null && cursorRect.top > lastCursorTop + 10) {
+        if (event && event.inputType !== 'insertParagraph' && event.data !== null) {
+          triggerDing(); 
+        }
+      }
+      lastCursorTop = cursorRect.top;
+    }
+  } catch (err) {}
+}
+
+let snapshotTimer = null;
+function sendTextToMemory() {
+  if (isRestoringProject) return;
+  try {
+    const activeText = getFullActiveText();
+    if (window.desktopAPI && window.desktopAPI.updateMemory) {
+      window.desktopAPI.updateMemory({
+        textContent: activeText,
+        transform: paper.style.transform || 'translate(0px, 0px)',
+        cursorIndex: getCursorIndex()
+      });
+    }
+
+    clearTimeout(snapshotTimer);
+    snapshotTimer = setTimeout(() => {
+      if (window.desktopAPI && window.desktopAPI.savePageSnapshot) {
+        if (committedPages.length > 0) {
+          committedPages.forEach((pageHtml, idx) => {
+            window.desktopAPI.savePageSnapshot({
+              pageNumber: idx + 1,
+              htmlContent: pageHtml
+            });
+          });
+        }
+        window.desktopAPI.savePageSnapshot({
+          pageNumber: committedPages.length + 1,
+          htmlContent: paper.innerHTML
+        });
+      }
+    }, 400);
+
+  } catch (err) {}
+}
+
+if (window.desktopAPI) {
+  window.desktopAPI.onRequestProjectState(() => {
+    const statePayload = {
+      textContent: getFullActiveText(),
+      transform: paper.style.transform,
+      cursorIndex: getCursorIndex()
+    };
+    if (window.desktopAPI.replyProjectState) {
+      window.desktopAPI.replyProjectState(statePayload);
+    } else {
+      window.desktopAPI.updateMemory(statePayload);
+    }
+  });
+
+  if (window.desktopAPI.onProjectLoaded) {
+    window.desktopAPI.onProjectLoaded((project) => {
+      try {
+        isRestoringProject = true;
+        paper.innerText = project.textContent || '';
+        if (project.transform) {
+          initializePosition(project.transform);
+        }
+        committedPages = [];
+
+        paper.focus();
+        const sel = window.getSelection();
+        const range = document.createRange();
+        
+        let charCount = 0;
+        let textNode = paper.firstChild || paper;
+
+        function traverseNodes(node) {
+          if (node.nodeType === Node.TEXT_NODE) {
+            const nextCount = charCount + node.length;
+            if (project.cursorIndex >= charCount && project.cursorIndex <= nextCount) {
+              textNode = node;
+              return true;
+            }
+            charCount = nextCount;
+          } else {
+            for (let i = 0; i < node.childNodes.length; i++) {
+              if (traverseNodes(node.childNodes[i])) return true;
+            }
+          }
+          return false;
+        }
+
+        traverseNodes(paper);
+
+        const offset = Math.min(Math.max(0, project.cursorIndex - charCount), textNode.length || 0);
+        try {
+          range.setStart(textNode, offset);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        } catch (e) {}
+        
+        setTimeout(() => {
+          isRestoringProject = false;
+        }, 100);
+      } catch (err) {
+        isRestoringProject = false;
+      }
+    });
+  }
+}
+
+let mouseTimer;
+function hideMouse() {
+  document.body.style.cursor = 'none';
+  viewport.style.cursor = 'none';
+  paper.style.cursor = 'none';
+}
+function showMouse() {
+  document.body.style.cursor = 'default';
+  viewport.style.cursor = 'default';
+  paper.style.cursor = 'default';
+}
+
+window.addEventListener('keydown', (e) => {
+  hideMouse();
+  clearTimeout(mouseTimer);
+
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (window.desktopAPI && window.desktopAPI.minimizeApp) {
+      window.desktopAPI.minimizeApp();
+    }
+    return;
+  }
+
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'q') {
+    if (window.desktopAPI && window.desktopAPI.quitApp) {
+      window.desktopAPI.quitApp();
+    }
+  }
+  
+  if (e.key === 'Backspace' && getCursorIndex() === 0 && committedPages.length > 0) {
+    e.preventDefault();
+    
+    const lastPageHtml = committedPages.pop();
+    paper.innerHTML = lastPageHtml || '&#8203;';
+    if (lastTransformState) paper.style.transform = lastTransformState;
+    
+    const range = document.createRange();
+    const sel = window.getSelection();
+    range.selectNodeContents(paper);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    
+    alignPaperToCursor();
+    sendTextToMemory();
+    return;
+  }
+
+  if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
+  
+  if (e.key === 'Enter') {
+    triggerDing(); 
+  } else {
+    const randomIndex = Math.floor(Math.random() * keySounds.length);
+    playSound(keySounds[randomIndex]);
+  }
+});
+
+window.addEventListener('mousemove', () => {
+  showMouse();
+  clearTimeout(mouseTimer);
+  mouseTimer = setTimeout(hideMouse, 1500);
+});
+
+paper.addEventListener('input', (e) => {
+  alignPaperToCursor(e);
+  sendTextToMemory(); 
+});
+  
+paper.addEventListener('click', (e) => {
+  alignPaperToCursor(e);
+});
+
+window.addEventListener('resize', () => {
+  if (!isRestoringProject) initializePosition();
+});
+  
+document.addEventListener('click', () => {
+  paper.focus();
+  alignPaperToCursor();
+});
+</script>
+</body>
+</html>

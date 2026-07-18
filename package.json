@@ -1,0 +1,50 @@
+{
+  "name": "Voidwriter",
+  "version": "1.0.0",
+  "description": "A minimalist typewriter desktop application",
+  "author": "Fredrik",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "build": {
+    "files": [
+      "main.js",
+      "preload.js",
+      "VoidWriter.html",
+      "README.txt",
+      "Rough Serif.ttf",
+      "nordwood-themes-R53t-Tg6J4c-unsplash.jpg",
+      "Typewriter.ico",
+      "Sounds/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "./Typewriter.ico",
+      "fileAssociations": [
+        {
+          "ext": "vwproject",
+          "name": "VoidWriter Project File",
+          "role": "Editor"
+        }
+      ]
+    },
+    "nsis": {
+      "installerIcon": "./Typewriter.ico",
+      "uninstallerIcon": "./Typewriter.ico",
+      "installerHeaderIcon": "./Typewriter.ico",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "canvas": "^3.2.3",
+    "html-to-image": "^1.11.13"
+  }
+}
